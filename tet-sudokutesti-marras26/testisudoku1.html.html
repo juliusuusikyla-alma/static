@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testisudoku Juliukselle!</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: #333; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; }
+  main { max-width: 550px; margin: 0 auto; padding: 16px; }
+  h1 { margin: 0 0 6px; font-size: 21px; }
+  .sub { margin: 0 0 14px; color: #666; font-size: 14px; line-height: 1.45; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="t"></h1>
+  <p class="sub" id="sub"></p>
+  <div id="app"></div>
+</main>
+<script>
+var PL_T = {
+  notes: 'Muistiinpanot (Shift ⇧)', erase: 'Poista', check: 'Tarkista', clear: 'Tyhjennä kaikki', solve: 'Näytä ratkaisu',
+  win: 'Hienoa! Pulma on ratkaistu.', ok: 'Ei virheitä tähän mennessä. Jatka samaan malliin!', shown: 'Ratkaisu näytetty.',
+  wrong: function (n) { return 'Väärin menneitä ruutuja: ' + n + ' (merkitty punaisella).'; },
+  hint: 'Valitse ruutu ja kirjoita numero 1-9. Muistiinpano: Shift + numero tai muistiinpanotila (N). Nuolinäppäimillä voit siirtyä ruudusta toiseen.',
+  cell: function (r, c) { return 'Rivi ' + r + ' sarake ' + c; },
+  congratsTitle: 'Hienoa!',
+  congrats: function (sud) { return 'Ratkaisit Tekniikka&Talouden viikon ' + (sud ? 'Sudokun' : 'Kakuron'); },
+  close: 'Sulje'
+};
+
+// st = { sel, entries:{i:digit}, notes:{i:bitmask}, bad:{i:true}, show:boolean }
+function boardSvg(D, st) {
+  var S = 60, N = D.N, sud = D.type === 'sudoku', W = N * S, pad = sud ? 3 : 2, g = [];
+  g.push('<svg viewBox="' + (-pad) + ' ' + (-pad) + ' ' + (W + 2 * pad) + ' ' + (W + 2 * pad) + '" xmlns="http://www.w3.org/2000/svg" font-family="Arial, sans-serif">');
+  for (var i = 0; i < N * N; i++) {
+    var r = Math.floor(i / N), c = i % N, x = c * S, y = r * S, cx = x + S / 2, cy = y + S / 2;
+    if (D.w[i]) {
+      var given = D.givens[i], bad = st.bad[i], v = st.entries[i];
+      var fill = bad ? '#fbd5d5' : st.sel === i ? '#bfe9f3' : '#fff';
+      g.push(!given && !st.show ? '<g data-i="' + i + '" aria-label="' + PL_T.cell(r + 1, c + 1) + '">' : '<g>');
+      g.push('<rect x="' + x + '" y="' + y + '" width="' + S + '" height="' + S + '" fill="' + fill + '" stroke="#000" stroke-width="' + (sud ? 1 : 2) + '"/>');
+      if (given) {
+        g.push('<text x="' + cx + '" y="' + cy + '" font-size="' + (S * 0.58) + '" font-weight="700" text-anchor="middle" dominant-baseline="central">' + given + '</text>');
+      } else if (st.show) {
+        g.push('<text x="' + cx + '" y="' + cy + '" font-size="' + (S * 0.55) + '" text-anchor="middle" dominant-baseline="central" fill="#00799a">' + D.sol[i] + '</text>');
+      } else if (v) {
+        g.push('<text x="' + cx + '" y="' + cy + '" font-size="' + (S * 0.55) + '" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="' + (bad ? '#b3261e' : '#00799a') + '">' + v + '</text>');
+      } else if (st.notes[i]) {
+        for (var d = 1; d <= 9; d++) if (st.notes[i] >> d & 1) {
+          var nx = cx + ((d - 1) % 3 - 1) * S / 3.1, ny = cy + (Math.floor((d - 1) / 3) - 1) * S / 3.1;
+          g.push('<text x="' + nx + '" y="' + ny + '" font-size="' + (S * 0.28) + '" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#555">' + d + '</text>');
+        }
+      }
+      g.push('</g>');
+    } else {
+      g.push('<rect x="' + x + '" y="' + y + '" width="' + S + '" height="' + S + '" fill="#d0d0d0" stroke="#000" stroke-width="2"/>');
+      g.push('<line x1="' + x + '" y1="' + y + '" x2="' + (x + S) + '" y2="' + (y + S) + '" stroke="#000" stroke-width="1.5"/>');
+      if (D.ac[i]) g.push('<text x="' + (x + S - 7) + '" y="' + (y + 6) + '" font-size="' + (S * 0.26) + '" font-weight="700" text-anchor="end" dominant-baseline="hanging">' + D.ac[i] + '</text>');
+      if (D.dn[i]) g.push('<text x="' + (x + 7) + '" y="' + (y + S - 6) + '" font-size="' + (S * 0.26) + '" font-weight="700" text-anchor="start">' + D.dn[i] + '</text>');
+    }
+  }
+  if (sud) for (var k = 0; k <= 3; k++) {
+    g.push('<line x1="' + (k * 3 * S) + '" y1="0" x2="' + (k * 3 * S) + '" y2="' + W + '" stroke="#000" stroke-width="4"/>');
+    g.push('<line x1="0" y1="' + (k * 3 * S) + '" x2="' + W + '" y2="' + (k * 3 * S) + '" stroke="#000" stroke-width="4"/>');
+  }
+  if (st.sel >= 0 && !st.show) {   // selection frame drawn last, so all four sides are equally thick
+    var sx = (st.sel % N) * S, sy = Math.floor(st.sel / N) * S;
+    g.push('<rect x="' + sx + '" y="' + sy + '" width="' + S + '" height="' + S + '" fill="none" stroke="#00ACCD" stroke-width="4" pointer-events="none"/>');
+  }
+  g.push('</svg>');
+  return g.join('');
+}
+
+function makePlayer(host, D, opts) {
+  opts = opts || {};
+  if (!document.getElementById('pl-style')) {
+    var css = document.createElement('style');
+    css.id = 'pl-style';
+    css.textContent =
+      '.pl-board svg{display:block;width:100%;height:auto;background:#fff;user-select:none;-webkit-user-select:none;touch-action:manipulation}' +
+      '.pl-board [data-i]{cursor:pointer}' +
+      '.pl-pad{display:grid;grid-template-columns:repeat(9,1fr);gap:6px;margin-top:12px}' +
+      '.pl-pad button,.pl-tools button{font-weight:700;font-size:17px;font-family:inherit;padding:10px 0;border:1px solid #d9d9d9;background:#fff;color:#333;border-radius:3px;cursor:pointer}' +
+      '.pl-pad button:hover,.pl-tools button:hover{border-color:#73d1e4}' +
+      '.pl-tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}' +
+      '.pl-tools button{font-size:14px;padding:10px 16px}' +
+      '.pl-tools button[aria-pressed="true"],.pl-tools button.pl-primary{background:#00ACCD;border-color:#00ACCD;color:#fff}' +
+      '.pl-msg{min-height:22px;margin-top:10px;font-size:15px;color:#666}' +
+      '.pl-msg.win{color:#00799a;font-weight:700}' +
+      '.pl-pop{position:fixed;left:50%;top:20px;transform:translateX(-50%);z-index:9999;box-sizing:border-box;width:360px;max-width:calc(100vw - 32px);background:#fff;border:2px solid #00ACCD;border-radius:3px;overflow:hidden;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.2)}' +
+      '.pl-pop-h{background:#00ACCD;color:#fff;font-weight:700;font-size:17px;line-height:1.3;padding:10px 44px 10px 16px}' +
+      '.pl-pop-b{color:#333;font-size:16px;line-height:1.45;padding:16px}' +
+      '.pl-pop button{position:absolute;top:6px;right:6px;width:28px;height:28px;padding:0;border:0;background:transparent;color:#fff;font:400 24px/1 Arial,sans-serif;cursor:pointer;border-radius:3px}' +
+      '.pl-pop button:hover{background:rgba(255,255,255,.22)}' +
+      '.pl-pop button:focus-visible{outline:2px solid #fff}' +
+      '.pl-hint{font-size:12px;color:#666;margin:10px 0 0;line-height:1.4}' +
+      '.pl-pad button:focus-visible,.pl-tools button:focus-visible{outline:2px solid #00ACCD;outline-offset:2px}';
+    document.head.appendChild(css);
+  }
+  var st = { sel: -1, entries: {}, notes: {}, bad: {}, show: false }, notesMode = false;
+  var pad = '';
+  for (var d = 1; d <= 9; d++) pad += '<button type="button" data-d="' + d + '">' + d + '</button>';
+  host.innerHTML =
+    '<div class="pl-board"></div><div class="pl-pad">' + pad + '</div>' +
+    '<div class="pl-tools"><button type="button" data-act="notes" aria-pressed="false">' + PL_T.notes + '</button>' +
+    '<button type="button" data-act="erase">' + PL_T.erase + '</button>' +
+    (opts.check ? '<button type="button" data-act="check" class="pl-primary">' + PL_T.check + '</button>' +
+                  '<button type="button" data-act="clear">' + PL_T.clear + '</button>' +
+                  '<button type="button" data-act="solve">' + PL_T.solve + '</button>' : '') +
+    '</div>' + (opts.check ? '<div class="pl-msg"></div>' : '') + '<p class="pl-hint">' + PL_T.hint + '</p>';
+  var board = host.querySelector('.pl-board'), msg = host.querySelector('.pl-msg'), notesBtn = host.querySelector('[data-act=notes]');
+
+  var playable = [];
+  for (var i = 0; i < D.N * D.N; i++) if (D.w[i] && !D.givens[i]) playable.push(i);
+
+  function draw() { board.innerHTML = boardSvg(D, st); }
+  function setMsg(t, win) { if (msg) { msg.textContent = t; msg.className = 'pl-msg' + (win ? ' win' : ''); } }
+  function solved() { return playable.every(function (i) { return st.entries[i] === D.sol[i]; }); }
+  var pop = null, celebrated = false;
+  function closePop() { if (pop) { pop.remove(); pop = null; } }
+  function showPop() {
+    closePop();
+    pop = document.createElement('div');
+    pop.className = 'pl-pop';
+    pop.setAttribute('role', 'status');
+    var h = document.createElement('div'), b = document.createElement('div');
+    h.className = 'pl-pop-h'; h.textContent = PL_T.congratsTitle;
+    b.className = 'pl-pop-b'; b.textContent = PL_T.congrats(D.type === 'sudoku');
+    pop.appendChild(h); pop.appendChild(b);
+    var x = document.createElement('button');
+    x.type = 'button'; x.setAttribute('aria-label', PL_T.close); x.textContent = '×';
+    x.addEventListener('click', closePop);
+    pop.appendChild(x);
+    document.body.appendChild(pop);
+  }
+  function changed() {
+    draw();
+    var ok = solved();
+    if (opts.check) { if (ok) setMsg(PL_T.win, true); else setMsg(''); }
+    if (ok && !celebrated) showPop();
+    if (!ok) { celebrated = false; closePop(); } else celebrated = true;
+  }
+  function setNotesMode(on) { notesMode = on; notesBtn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+
+  function put(digit, asNote) {
+    var s = st.sel;
+    if (s < 0 || st.show) return;
+    delete st.bad[s];
+    if (asNote) {
+      if (st.entries[s]) return;                       // a cell holds an answer OR notes
+      st.notes[s] = (st.notes[s] || 0) ^ (1 << digit);
+    } else {
+      st.entries[s] = digit; st.notes[s] = 0;
+    }
+    changed();
+  }
+  function erase() {
+    var s = st.sel;
+    if (s < 0) return;
+    delete st.entries[s]; st.notes[s] = 0; delete st.bad[s];
+    changed();
+  }
+  function move(dr, dc) {
+    if (st.sel < 0) { st.sel = playable[0]; draw(); return; }
+    var r = Math.floor(st.sel / D.N), c = st.sel % D.N;
+    for (;;) {
+      r += dr; c += dc;
+      if (r < 0 || c < 0 || r >= D.N || c >= D.N) return;
+      var j = r * D.N + c;
+      if (D.w[j] && !D.givens[j]) { st.sel = j; draw(); return; }
+    }
+  }
+
+  board.addEventListener('click', function (e) {
+    var g = e.target.closest ? e.target.closest('[data-i]') : null;
+    if (!g) return;
+    st.sel = +g.getAttribute('data-i');
+    draw();
+  });
+  host.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button') : null;
+    if (!b || !host.contains(b)) return;
+    if (b.getAttribute('data-d')) { put(+b.getAttribute('data-d'), notesMode || e.shiftKey); return; }
+    var a = b.getAttribute('data-act');
+    if (a === 'notes') setNotesMode(!notesMode);
+    else if (a === 'erase') erase();
+    else if (a === 'check') {
+      if (solved()) { setMsg(PL_T.win, true); return; }
+      st.bad = {};
+      var wrong = 0;
+      playable.forEach(function (i) { if (st.entries[i] && st.entries[i] !== D.sol[i]) { st.bad[i] = true; wrong++; } });
+      draw();
+      setMsg(wrong ? PL_T.wrong(wrong) : PL_T.ok);
+    } else if (a === 'clear') { st.entries = {}; st.notes = {}; st.bad = {}; st.show = false; celebrated = false; closePop(); draw(); setMsg(''); }
+    else if (a === 'solve') {
+      playable.forEach(function (i) { st.entries[i] = D.sol[i]; });
+      st.notes = {}; st.bad = {}; celebrated = true; closePop(); draw(); setMsg(PL_T.shown);
+    }
+  });
+
+  function onKey(e) {
+    var t = e.target && e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || e.ctrlKey || e.metaKey || e.altKey) return;
+    var m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '');
+    if (m) { if (st.sel < 0) return; e.preventDefault(); put(+m[1], notesMode || e.shiftKey); return; }
+    if (e.code === 'KeyN') { setNotesMode(!notesMode); return; }
+    if (e.code === 'Backspace' || e.code === 'Delete' || e.code === 'Digit0' || e.code === 'Numpad0') { if (st.sel >= 0) { e.preventDefault(); erase(); } return; }
+    var dirs = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (dirs[e.code]) { e.preventDefault(); move(dirs[e.code][0], dirs[e.code][1]); return; }
+    if (e.code === 'Escape' && st.sel >= 0) { st.sel = -1; draw(); }
+  }
+  document.addEventListener('keydown', onKey);
+  draw();
+  return { destroy: function () { document.removeEventListener('keydown', onKey); closePop(); } };
+}
+var D = {"type":"sudoku","level":"hard","title":"Testisudoku Juliukselle!","N":9,"w":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],"givens":[2,0,6,9,3,0,0,0,0,4,0,3,0,0,0,0,0,0,1,9,0,0,0,4,0,2,0,3,0,0,5,8,0,0,0,2,0,0,0,2,0,7,0,0,0,8,0,0,0,6,3,0,0,7,0,2,0,4,0,0,0,1,6,0,0,0,0,0,0,9,0,8,0,0,0,0,1,6,2,0,4],"sol":[2,8,6,9,3,1,7,4,5,4,5,3,6,7,2,1,8,9,1,9,7,8,5,4,6,2,3,3,7,1,5,8,9,4,6,2,5,6,9,2,4,7,8,3,1,8,4,2,1,6,3,5,9,7,7,2,5,4,9,8,3,1,6,6,1,4,3,2,5,9,7,8,9,3,8,7,1,6,2,5,4],"ac":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"dn":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]};
+document.getElementById('t').textContent = D.title;
+document.getElementById('sub').textContent = (D.type === 'sudoku' ? 'Sudoku' : 'Kakuro') + ' - ' + ({ low: 'Helppo', medium: 'Keskitaso', hard: 'Vaikea' })[D.level] + '. ' +
+  (D.type === 'sudoku' ? 'Täytä ruudukko niin, että jokaisella rivillä, sarakkeella ja 3 x 3 -laatikossa on numerot 1-9 kerran.'
+          : 'Täytä valkoiset ruudut numeroilla 1-9 niin, että jokaisen jakson summa on vihjeen mukainen (oikealla ylhäällä = vaakasuunta, vasemmalla alhaalla = pystysuunta). Sama numero ei saa toistua samassa jaksossa.');
+makePlayer(document.getElementById('app'), D, { check: true });
+</script>
+</body>
+</html>
